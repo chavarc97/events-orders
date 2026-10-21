@@ -24,7 +24,7 @@ services:
     environment:
       - RABBIT_HOST=rabbitmq
     volumes:
-      - ./logs:/app/logs
+      - .:/app
     depends_on:
       - rabbitmq
     restart: on-failure
@@ -39,7 +39,7 @@ services:
     environment:
       - RABBIT_HOST=rabbitmq
     volumes:
-      - ./logs:/app/logs
+      - .:/app
     depends_on:
       - rabbitmq
     restart: on-failure
@@ -54,7 +54,7 @@ services:
     environment:
       - RABBIT_HOST=rabbitmq
     volumes:
-      - ./logs:/app/logs
+      - .:/app
     depends_on:
       - rabbitmq
     restart: on-failure
@@ -68,7 +68,7 @@ services:
     environment:
       - RABBIT_HOST=rabbitmq
     volumes:
-      - ./logs:/app/logs
+      - .:/app
     depends_on:
       - rabbitmq
     profiles: [ "cli" ] # Prevents 'app' from running when you do 'docker compose up'

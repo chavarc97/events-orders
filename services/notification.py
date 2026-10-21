@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from common.broker import Broker
 from common.events import Event, EventType
-import json
-
 
 SERVICE_NAME = "notification-service"
 
@@ -14,24 +12,44 @@ class Email:
     email_body: str
 
 
-class Notification_service:
+class NotificationService:
     def __init__(self):
         self.broker = Broker(service_name=SERVICE_NAME)
 
     def _build_email(self, event: Event) -> Email:
-        """Builds email info from an event"""
-        email_subject = None
-        email_body = None
+        """Builds email content dynamically based on the event received."""
+        order_id = event.order_id
+        items = event.payload.get("items", [])
+        item_names = ", ".join([item.get("book_id", "") for item in items]) or "Selected books"
+        email_subject = "Order Update"
+        email_body = ""
 
         if event.event_type == EventType.ORDER_PLACED:
-            email_subject = "Order Placed"
-            email_body = f"Order {event.order_id} has been placed."
+            email_subject = f"Order Received #{order_id[:8]}"
+            total = event.payload.get("total", 0.0)
+            email_body = (
+                f"Hello! We received your order for [{item_names}]. "
+                f"Total: ${total:.2f}. Status: Processing payment."
+            )
+
         elif event.event_type == EventType.PAYMENT_DENIED:
-            email_subject = "Payment Denied"
-            email_body = f"Payment for order {event.order_id} has been denied."
+            reason = event.payload.get("reason", "unknown error")
+            email_subject = f"Payment Failed: Order #{order_id[:8]}"
+            email_body = (
+                f"We were unable to process your payment for order #{order_id[:8]}. "
+                f"Reason: {reason}. Please update your payment method."
+            )
+
         elif event.event_type == EventType.ORDER_FULFILLED:
-            email_subject = "Order Fulfilled"
-            email_body = f"Order {event.order_id} has been fulfilled."
+            tracking = event.payload.get("tracking_number", "N/A")
+            carrier = event.payload.get("carrier", "standard carrier")
+            delivery = event.payload.get("estimated_delivery", "soon")
+            email_subject = f"Your Order #{order_id[:8]} Has Shipped!"
+            email_body = (
+                f"Your items [{item_names}] are on their way via {carrier}!\n"
+                f"Tracking code: {tracking}. Estimated arrival: {delivery}."
+            )
+
         return Email(
             to=event.payload.get("customer_email"),
             email_subject=email_subject,
@@ -39,24 +57,30 @@ class Notification_service:
         )
 
     def handler(self, event: Event) -> Event:
-        """handles the events for this service"""
+        """Processes incoming events, simulates dispatching an email, and emits email.sent."""
         email = self._build_email(event)
         if email.to is not None:
             self._send_email(email)
 
-        next_event = event.derive(EventType.EMAIL_SENT, SERVICE_NAME)
-        self.broker.publish(next_event)
-
-        return next_event
+        next_event = event.derive(
+            EventType.EMAIL_SENT,
+            SERVICE_NAME,
+            email_to=email.to,
+            email_subject=email.email_subject,
+            email_body=email.email_body,
+        )
+        return self.broker.publish(next_event)
 
     def _send_email(self, email: Email) -> None:
-        """Sends an email"""
-        print(
-            f"Sending email to {email.to}: {email.email_subject} - {email.email_body}"
-        )
+        """Visual email dispatch representation in logs/console."""
+        print("+" + "-" * 62 + "+")
+        print(f"| 📬 [DISPATCHED EMAIL] To: {email.to:<34} |")
+        print(f"|    Subject: {email.email_subject:<48} |")
+        print(f"|    Message: {email.email_body:<48} |")
+        print("+" + "-" * 62 + "+")
 
     def listen_events(self) -> None:
-        """bind event types to the handler"""
+        """Listen to all order milestones that require customer alerts."""
         self.broker.consume(
             queue_name="notification-queue",
             routing_keys=[
@@ -69,5 +93,5 @@ class Notification_service:
 
 
 if __name__ == "__main__":
-    service = Notification_service()
+    service = NotificationService()
     service.listen_events()

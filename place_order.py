@@ -1,18 +1,42 @@
+import os
+import time
 import uuid
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 
 from services.order import Order, OrderService
 
 
+LOG_FILE = os.path.join(os.getenv("LOG_DIR", "logs"), "events.log")
+
 SCENARIOS = [
-    ("cust-1", "ana@mail.com", ["b1"]),  # -> Payment Ok -> Fulfill
-    ("cust-2", "bob@mail.com", ["b2", "b2", "b3"]),  # -> Payment Denied -> Canceled
-    (
-        "cust-3",
-        "charlie@mail.com",
-        ["b1", "b2", "b3", "b4", "b5"],
-    ),  # -> Payment Ok -> Fulfill
-    ("cust-4", "tom@mail.com", ["b1"]),  # stock problem -> Payment Denied
+    {
+        "name": "Scenario 1: Happy Path",
+        "description": "Active user with sufficient funds -> Payment Applied -> Fulfillment -> Delivery email",
+        "customer_id": "cust-1",
+        "email": "ana@mail.com",
+        "book_ids": ["b1"],
+    },
+    {
+        "name": "Scenario 2: Inactive Account",
+        "description": "User account is suspended/inactive -> Payment Denied -> Denial email",
+        "customer_id": "cust-2",
+        "email": "bob@mail.com",
+        "book_ids": ["b2", "b3"],
+    },
+    {
+        "name": "Scenario 3: High-Value Bulk Order (Success)",
+        "description": "High balance user buying multiple books -> Payment Applied -> Fulfillment",
+        "customer_id": "cust-3",
+        "email": "charlie@mail.com",
+        "book_ids": ["b1", "b2", "b3", "b4", "b5"],
+    },
+    {
+        "name": "Scenario 4: Insufficient Funds",
+        "description": "Order total ($1500) exceeds balance ($1000) -> Payment Denied -> Denial email",
+        "customer_id": "cust-4",
+        "email": "tom@mail.com",
+        "book_ids": ["b5", "b5", "b5"],
+    },
 ]
 
 
@@ -49,7 +73,7 @@ catalog = Catalog(
 
 def build_order(customer: Customer, book_ids: list[str]) -> Order:
     total = 0
-    items: list[Book] = []
+    items: list[dict] = []
 
     # look up each id in the Catalog
     for book_id in book_ids:
@@ -67,38 +91,73 @@ def build_order(customer: Customer, book_ids: list[str]) -> Order:
     )
 
 
+def tail_new_events(order_id: str, last_pos: int) -> int:
+    """Reads events from events.log written after last_pos that correlate to order_id."""
+    if not os.path.exists(LOG_FILE):
+        return last_pos
+
+    with open(LOG_FILE, "r") as f:
+        f.seek(last_pos)
+        lines = f.readlines()
+        new_pos = f.tell()
+
+    relevant_lines = [line.strip() for line in lines if f"order={order_id}" in line]
+    if relevant_lines:
+        print("\n  🔍 [ASYNCHRONOUS EVENT TRAIL FROM SERVICES]:")
+        for line in relevant_lines:
+            # Highlight service name and action
+            if "produced" in line:
+                print(f"     🟢 {line}")
+            elif "consumed" in line:
+                print(f"     🔵 {line}")
+            else:
+                print(f"     ⚪ {line}")
+        print()
+
+    return new_pos
+
+
 def main():
-    """
-    Reqs:
-        * Simulate the whole flow with multiple orders.
-        * We can use enters to move into the next steps
-
-        Steps:
-            1. Order a Book
-            2. Order Event is send
-            3. Payment Event is processed
-            4. Check if payment is Ok -> if not then
-                * Send Payment Denied Event
-                * Order is canceled
-
-            5. if payment is Ok
-                * Send Payment Applied Event
-                * Send Order Fulfilled Event
-
-    """
-
     service = OrderService()
     service.connect()
 
+    print("\n" + "=" * 70)
+    print("      🚀 EVENT-DRIVEN ORDER PROCESSING SIMULATION")
+    print("=" * 70)
+
+    # Track log position so we only display logs produced during this run
+    log_pos = os.path.getsize(LOG_FILE) if os.path.exists(LOG_FILE) else 0
+
     try:
-        for customer_id, customer_email, book_ids in SCENARIOS:
-            customer = Customer(customer_id, customer_email, [], 0)
-            order = build_order(customer, book_ids)
+        for idx, sc in enumerate(SCENARIOS, 1):
+            customer = Customer(sc["customer_id"], sc["email"], [], 0)
+            order = build_order(customer, sc["book_ids"])
+
+            print(f"\n[{idx}/{len(SCENARIOS)}] {sc['name']}")
+            print(f"  📌 Flow Goal:  {sc['description']}")
+            print(f"  👤 Customer:   {sc['customer_id']} ({sc['email']})")
+            print("  📚 Order Items:")
+            for item in order.items:
+                print(f"     - Book '{item['book_id']}' @ ${item['price']:.2f}")
+            print(f"  💰 Total:      ${order.total:.2f}")
+            print(f"  🆔 Order ID:   {order.order_id}")
+
+            input("\n  👉 Press [Enter] to publish 'order.placed'...")
+
             service.place_order(order)
-            input("Press Enter to continue...")
+            print("  ✔ Event 'order.placed' published to RabbitMQ!")
+
+            # Allow other containers to consume & produce their events
+            time.sleep(0.9)
+
+            # Display the real-time event trail generated by the microservices
+            log_pos = tail_new_events(order.order_id, log_pos)
+
+            print("-" * 70)
 
     finally:
         service.close()
+        print("\n🏁 Simulation completed. All scenarios published and traced.\n")
 
 
 if __name__ == "__main__":
