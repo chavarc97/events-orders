@@ -95,3 +95,14 @@ flowchart LR
 ```
 
 **Legend:** blue boxes are services, white rounded boxes are events, dotted arrows are event flow, and the solid arrow is the initial request.
+
+``` mermaid
+flowchart LR
+    P[Producer] -->|"routing_key = 'order.placed'"| X{{"Exchange 'orders' (topic)"}}
+    X -->|"bound to order.placed"| Q1[payment queue]
+    X -->|"bound to order.placed"| Q2[notification queue]
+    Q1 --> C1[Payment service]
+    Q2 --> C2[Notification service]
+
+```
+
