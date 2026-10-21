@@ -1,0 +1,77 @@
+services:
+  # ---------------------------------------------------------
+  # 1. Message Broker (RabbitMQ)
+  # ---------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672" # AMQP protocol port (used by pika)
+      - "15672:15672" # Web Management Dashboard (http://localhost:15672)
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  # ---------------------------------------------------------
+  # 2. Payment Service (Long-running Consumer)
+  # ---------------------------------------------------------
+  payment:
+    build: .
+    container_name: payment-service
+    command: python -m services.payment
+    environment:
+      - RABBIT_HOST=rabbitmq
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - rabbitmq
+    restart: on-failure
+
+  # ---------------------------------------------------------
+  # 3. Fulfillment Service (Long-running Consumer)
+  # ---------------------------------------------------------
+  fulfillment:
+    build: .
+    container_name: fulfillment-service
+    command: python -m services.fulfillment
+    environment:
+      - RABBIT_HOST=rabbitmq
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - rabbitmq
+    restart: on-failure
+
+  # ---------------------------------------------------------
+  # 4. Notification Service (Long-running Consumer)
+  # ---------------------------------------------------------
+  notification:
+    build: .
+    container_name: notification-service
+    command: python -m services.notification
+    environment:
+      - RABBIT_HOST=rabbitmq
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - rabbitmq
+    restart: on-failure
+
+  # ---------------------------------------------------------
+  # 5. Order / App CLI (Runs on demand, not in 'up')
+  # ---------------------------------------------------------
+  app:
+    build: .
+    container_name: order-app
+    environment:
+      - RABBIT_HOST=rabbitmq
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - rabbitmq
+    profiles: [ "cli" ] # Prevents 'app' from running when you do 'docker compose up'
+
+volumes:
+  rabbitmq_data:
